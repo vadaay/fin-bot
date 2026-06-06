@@ -23,7 +23,7 @@ def signal(change):
 
 def send_post():
     token = os.environ["8807568809:AAGRLm0KbFGR6pJqwIQABcwwHNahlK37Rro"]
-    channel = "@crypto-x-news"
+    channel = "@finanis"
 
     data = get_crypto()
 
