@@ -24,7 +24,7 @@ def signal(change):
 def send_post():
     # 🔑 БЕРЁМ ТОКЕН ИЗ GITHUB SECRETS
     token = os.environ["8807568809:AAFuPcm0m84g4eGV5-nagVS6RyxOKL7HmtM"]
-    channel = "@finanis"
+    channel = "@crypto-x-news"
 
     data = get_crypto()
 
