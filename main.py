@@ -22,7 +22,8 @@ def signal(change):
         return "📉 Сильное падение"
 
 def send_post():
-    token = os.environ["8807568809:AAGRLm0KbFGR6pJqwIQABcwwHNahlK37Rro"]
+    # 🔑 БЕРЁМ ТОКЕН ИЗ GITHUB SECRETS
+    token = os.environ["8807568809:AAFuPcm0m84g4eGV5-nagVS6RyxOKL7HmtM"]
     channel = "@finanis"
 
     data = get_crypto()
