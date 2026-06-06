@@ -1,23 +1,27 @@
 name: Crypto Bot
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 9 * * *'  # Каждый день в 9:00
+  workflow_dispatch:  # Ручной запуск
 
 jobs:
-  run:
+  run-bot:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - run: pip install requests
-
-      - run: python main.py
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+    - uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: pip install requests
+    
+    - name: Run bot
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}  # ← ДОБАВЬТЕ ЭТУ СТРОКУ
+      run: python main.py
