@@ -1,4 +1,4 @@
-name: Crypto Bot
+name:Crypto Bot
 
 on:
   schedule:
