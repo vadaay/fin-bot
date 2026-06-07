@@ -1,8 +1,7 @@
 import os
 import requests
 from datetime import datetime
-import base64
-from io import BytesIO
+import json
 
 def get_crypto():
     """Получает данные о криптовалютах с CoinGecko"""
@@ -42,7 +41,7 @@ def get_financial_news():
     
     url = "https://newsapi.org/v2/everything"
     params = {
-        "q": "interest rates OR federal reserve OR ECB OR central bank OR inflation OR криптовалюта OR биткоин",
+        "q": "ставка OR инфляция OR биткоин OR криптовалюта OR фрс",
         "language": "ru",
         "sortBy": "publishedAt",
         "pageSize": 5,
@@ -63,7 +62,7 @@ def get_economic_calendar():
         "ФРС": "Решение по ставке: 12.06.2024",
         "ЕЦБ": "Решение по ставке: 06.06.2024",
         "Данные CPI": "Инфляция США: ежемесячно",
-        "Non-Farm": "Данные по занятости: первая пятница месяца"
+        "Non-Farm": "Занятость США: первая пятница месяца"
     }
     return events
 
@@ -87,7 +86,7 @@ def get_market_sentiment(btc_ch):
     if btc_ch > 5:
         return "🟢 Жадность"
     elif btc_ch > 2:
-        return "🟡 Умеренный оптимизм"
+        return "🟡 Оптимизм"
     elif btc_ch > 0:
         return "⚪ Нейтрально"
     elif btc_ch > -5:
@@ -95,36 +94,34 @@ def get_market_sentiment(btc_ch):
     else:
         return "🔴 Сильный страх"
 
-def create_price_chart(coin_id, coin_name):
-    """
-    Создаёт график цены через QuickChart API
-    Бесплатно, не требует API ключа
-    """
-    # Получаем исторические данные за 7 дней
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {
-        "vs_currency": "usd",
-        "days": 7
-    }
-    
+def create_price_chart(coin_id, coin_name, color):
+    """Создаёт график цены через QuickChart API"""
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
+        # Получаем данные за 7 дней
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+        params = {"vs_currency": "usd", "days": 7}
+        
+        response = requests.get(url, params=params, timeout=15)
         data = response.json()
         
         prices = data["prices"]
         
-        # Берём каждую 12-ю точку для графика (примерно каждые 6 часов)
-        prices_simplified = prices[::12]
+        # Упрощаем для графика (каждая 8-я точка)
+        step = len(prices) // 20
+        if step < 1:
+            step = 1
+            
         labels = []
         values = []
         
-        for timestamp, price in prices_simplified:
-            dt = datetime.fromtimestamp(timestamp/1000)
+        for i in range(0, len(prices), step):
+            timestamp = prices[i][0] / 1000
+            price = prices[i][1]
+            dt = datetime.fromtimestamp(timestamp)
             labels.append(dt.strftime('%d.%m'))
             values.append(round(price))
         
-        # Создаём график через QuickChart
+        # Конфигурация графика
         chart_config = {
             "type": "line",
             "data": {
@@ -132,11 +129,12 @@ def create_price_chart(coin_id, coin_name):
                 "datasets": [{
                     "label": f"{coin_name} (USD)",
                     "data": values,
-                    "borderColor": "#f7931a" if coin_id == "bitcoin" else "#627eea",
-                    "backgroundColor": "rgba(247, 147, 26, 0.1)" if coin_id == "bitcoin" else "rgba(98, 126, 234, 0.1)",
-                    "borderWidth": 3,
+                    "borderColor": color,
+                    "backgroundColor": color + "33",
+                    "borderWidth": 2,
                     "fill": True,
-                    "tension": 0.4
+                    "tension": 0.3,
+                    "pointRadius": 0
                 }]
             },
             "options": {
@@ -145,87 +143,104 @@ def create_price_chart(coin_id, coin_name):
                         "display": True,
                         "text": f"{coin_name} за 7 дней",
                         "color": "#ffffff",
-                        "font": {
-                            "size": 16
-                        }
+                        "font": {"size": 18}
+                    },
+                    "legend": {
+                        "display": False
                     }
                 },
                 "scales": {
-                    "yAxes": [{
+                    "y": {
                         "ticks": {
-                            "color": "#999999",
-                            "callback": "'$' + value"
+                            "color": "#cccccc",
+                            "callback": "function(value) { return '$' + value.toLocaleString(); }"
+                        },
+                        "grid": {
+                            "color": "#333333"
                         }
-                    }],
-                    "xAxes": [{
+                    },
+                    "x": {
                         "ticks": {
-                            "color": "#999999"
+                            "color": "#cccccc"
+                        },
+                        "grid": {
+                            "color": "#333333"
                         }
-                    }]
-                },
-                "legend": {
-                    "display": False
+                    }
                 }
             }
         }
         
-        import json
+        # Создаём URL для графика
         chart_json = json.dumps(chart_config)
-        chart_url = f"https://quickchart.io/chart?c={chart_json}&width=600&height=300&backgroundColor=transparent"
+        chart_url = f"https://quickchart.io/chart?c={chart_json}&width=600&height=350&backgroundColor=%231a1a2e"
         
         return chart_url
         
     except Exception as e:
-        print(f"❌ Ошибка создания графика для {coin_name}: {e}")
+        print(f"❌ Не удалось создать график для {coin_name}: {e}")
         return None
 
-def create_fear_greed_chart():
+def create_fear_greed_gauge(value, classification):
     """Создаёт шкалу страха и жадности"""
-    fng = get_fear_greed_index()
-    if not fng:
-        return None
-    
-    value = int(fng["value"])
-    
-    # Выбираем цвет в зависимости от значения
-    if value < 30:
-        color = "#ef5350"  # Красный
-    elif value < 50:
-        color = "#ffa726"  # Оранжевый
+    # Цвет в зависимости от значения
+    if value < 25:
+        color = "#ef5350"
+    elif value < 45:
+        color = "#ff9800"
+    elif value < 55:
+        color = "#ffc107"
+    elif value < 75:
+        color = "#8bc34a"
     else:
-        color = "#66bb6a"  # Зелёный
+        color = "#4caf50"
     
     chart_config = {
         "type": "radialGauge",
         "data": {
             "datasets": [{
                 "data": [value],
-                "backgroundColor": color
+                "backgroundColor": color,
+                "borderWidth": 0
             }]
         },
         "options": {
             "centerArea": {
                 "displayText": True,
                 "text": f"{value}",
-                "fontSize": 40,
-                "fontColor": "#ffffff"
+                "fontSize": 50,
+                "fontColor": "#ffffff",
+                "fontFamily": "Arial"
             },
             "title": {
                 "display": True,
-                "text": "Индекс страха и жадности",
+                "text": ["Индекс страха", "и жадности"],
+                "color": "#cccccc",
+                "fontSize": 14
+            },
+            "subtitle": {
+                "display": True,
+                "text": classification,
+                "color": color,
+                "fontSize": 16
+            },
+            "needle": {
                 "color": "#ffffff"
             }
         }
     }
     
-    import json
-    chart_json = json.dumps(chart_config)
-    return f"https://quickchart.io/chart?c={chart_json}&width=400&height=250&backgroundColor=transparent"
+    try:
+        chart_json = json.dumps(chart_config)
+        return f"https://quickchart.io/chart?c={chart_json}&width=400&height=350&backgroundColor=%231a1a2e"
+    except Exception as e:
+        print(f"❌ Ошибка создания шкалы: {e}")
+        return None
 
-def send_photo(token, channel, photo_url, caption=""):
-    """Отправляет фото с подписью в Telegram"""
+def send_telegram_photo(token, channel, photo_url, caption):
+    """Отправка фото в Telegram"""
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
-    payload = {
+    data = {
         "chat_id": channel,
         "photo": photo_url,
         "caption": caption,
@@ -233,166 +248,212 @@ def send_photo(token, channel, photo_url, caption=""):
     }
     
     try:
-        response = requests.post(url, json=payload, timeout=15)
-        response.raise_for_status()
-        return response.json().get("ok", False)
-    except:
+        response = requests.post(url, json=data, timeout=15)
+        result = response.json()
+        
+        if result.get("ok"):
+            print("   ✅ Фото отправлено")
+            return True
+        else:
+            print(f"   ❌ Ошибка: {result}")
+            return False
+    except Exception as e:
+        print(f"   ❌ Исключение: {e}")
         return False
 
-def send_media_group(token, channel, media_list):
-    """Отправляет группу изображений"""
-    url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
-    payload = {
+def send_telegram_message(token, channel, text):
+    """Отправка текста в Telegram"""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = {
         "chat_id": channel,
-        "media": media_list
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
     
     try:
-        response = requests.post(url, json=payload, timeout=15)
-        response.raise_for_status()
-        return response.json().get("ok", False)
-    except:
+        response = requests.post(url, json=data, timeout=10)
+        result = response.json()
+        
+        if result.get("ok"):
+            print("   ✅ Текст отправлен")
+            return True
+        else:
+            print(f"   ❌ Ошибка: {result}")
+            return False
+    except Exception as e:
+        print(f"   ❌ Исключение: {e}")
+        return False
+
+def send_media_group(token, channel, photos):
+    """Отправка группы фото (альбом)"""
+    url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
+    
+    media = []
+    for i, (photo_url, caption) in enumerate(photos):
+        media.append({
+            "type": "photo",
+            "media": photo_url,
+            "caption": caption,
+            "parse_mode": "HTML"
+        })
+    
+    data = {
+        "chat_id": channel,
+        "media": json.dumps(media)
+    }
+    
+    try:
+        response = requests.post(url, data=data, timeout=20)
+        result = response.json()
+        
+        if result.get("ok"):
+            print("   ✅ Альбом отправлен")
+            return True
+        else:
+            print(f"   ❌ Ошибка: {result}")
+            return False
+    except Exception as e:
+        print(f"   ❌ Исключение: {e}")
         return False
 
 def send_post():
-    """Отправляет серию постов в Telegram канал"""
+    """Отправляет посты с картинками в Telegram"""
     
-    # 🔑 Получаем токен
+    # 🔑 Токен
     token = os.environ.get("BOT_TOKEN")
     if not token:
-        print("❌ Ошибка: BOT_TOKEN не найден!")
+        print("❌ BOT_TOKEN не найден!")
         return False
     
     channel = os.environ.get("TELEGRAM_CHANNEL", "@finanis")
     
-    # 📊 Получаем данные
+    print("📊 Получаем данные...")
+    
+    # Данные
     data = get_crypto()
     fear_greed = get_fear_greed_index()
     
     if not data:
-        print("❌ Не удалось получить данные о криптовалютах")
+        print("❌ Нет данных о криптовалютах")
         return False
     
     try:
         btc = data["bitcoin"]["usd"]
         btc_ch = data["bitcoin"]["usd_24h_change"]
-        btc_mcap = data["bitcoin"].get("usd_market_cap", 0)
         
         eth = data["ethereum"]["usd"]
         eth_ch = data["ethereum"]["usd_24h_change"]
-        eth_mcap = data["ethereum"].get("usd_market_cap", 0)
     except KeyError as e:
-        print(f"❌ Ошибка в структуре данных: {e}")
+        print(f"❌ Нет данных: {e}")
         return False
     
     current_date = datetime.now().strftime('%d.%m.%Y')
     current_time = datetime.now().strftime('%H:%M МСК')
     
-    print("📊 Создаём графики...")
-    
-    # Создаём графики
-    btc_chart = create_price_chart("bitcoin", "Bitcoin")
-    eth_chart = create_price_chart("ethereum", "Ethereum")
-    fng_chart = create_fear_greed_chart()
-    
-    # === ПОСТ 1: Индекс страха и жадности + Обзор ===
-    print("📤 Отправляем пост 1...")
-    
-    text1 = f"📊 <b>Крипто-рынок • {current_date}</b>\n"
-    text1 += f"🕐 {current_time}\n\n"
+    # ====== ПОСТ 1: Индекс страха и жадности ======
+    print("\n📤 ПОСТ 1: Индекс страха и жадности")
     
     if fear_greed:
-        fg_value = fear_greed["value"]
+        fg_value = int(fear_greed["value"])
         fg_class = fear_greed["value_classification"]
-        text1 += f"🎭 <b>Индекс страха:</b> {fg_value}/100\n"
-        text1 += f"📊 <i>{fg_class}</i>\n\n"
-    
-    text1 += f"🌡 <b>Настроение рынка:</b> {get_market_sentiment(btc_ch)}\n\n"
-    text1 += "📌 <i>Не инвестируйте на эмоциях</i>"
-    
-    if fng_chart:
-        send_photo(token, channel, fng_chart, text1)
-    else:
-        # Отправляем без картинки если не получилось
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": channel, "text": text1, "parse_mode": "HTML"}
-        )
-    
-    # === ПОСТ 2: Графики BTC и ETH ===
-    print("📤 Отправляем пост 2 (графики)...")
-    
-    if btc_chart and eth_chart:
-        media = [
-            {
-                "type": "photo",
-                "media": btc_chart,
-                "caption": f"₿ <b>BTC:</b> ${btc:,.0f} ({btc_ch:+.2f}%) {signal(btc_ch)}",
-                "parse_mode": "HTML"
-            },
-            {
-                "type": "photo",
-                "media": eth_chart,
-                "caption": f"Ξ <b>ETH:</b> ${eth:,.0f} ({eth_ch:+.2f}%) {signal(eth_ch)}",
-                "parse_mode": "HTML"
-            }
-        ]
-        send_media_group(token, channel, media)
-    else:
-        # Если графики не создались, отправляем текстом
-        text2 = "💎 <b>Основные активы:</b>\n\n"
-        text2 += f"₿ Bitcoin: ${btc:,.0f}\n"
-        text2 += f"   {btc_ch:+.2f}% {signal(btc_ch)}\n"
-        text2 += f"   Кап.: ${btc_mcap/1e9:,.1f}B\n\n"
-        text2 += f"Ξ Ethereum: ${eth:,.0f}\n"
-        text2 += f"   {eth_ch:+.2f}% {signal(eth_ch)}\n"
-        text2 += f"   Кап.: ${eth_mcap/1e9:,.1f}B"
         
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": channel, "text": text2, "parse_mode": "HTML"}
+        # Создаём шкалу
+        gauge_url = create_fear_greed_gauge(fg_value, fg_class)
+        
+        caption1 = (
+            f"📊 <b>Крипто-рынок • {current_date}</b>\n"
+            f"🕐 {current_time}\n\n"
+            f"🎭 <b>Индекс страха и жадности:</b>\n"
+            f"<b>{fg_value}/100 — {fg_class}</b>\n\n"
+            f"🌡 <b>Настроение рынка:</b> {get_market_sentiment(btc_ch)}\n\n"
+            f"📌 <i>Когда все боятся — покупай\n"
+            f"Когда все жадничают — продавай</i>"
         )
+        
+        if gauge_url:
+            send_telegram_photo(token, channel, gauge_url, caption1)
+        else:
+            send_telegram_message(token, channel, caption1)
+    else:
+        caption1 = (
+            f"📊 <b>Крипто-рынок • {current_date}</b>\n"
+            f"🕐 {current_time}\n\n"
+            f"🌡 <b>Настроение рынка:</b> {get_market_sentiment(btc_ch)}"
+        )
+        send_telegram_message(token, channel, caption1)
     
-    # === ПОСТ 3: Новости и события ===
-    print("📤 Отправляем пост 3 (новости)...")
+    # ====== ПОСТ 2: Графики BTC и ETH ======
+    print("\n📤 ПОСТ 2: Графики")
+    
+    btc_chart_url = create_price_chart("bitcoin", "Bitcoin", "#f7931a")
+    eth_chart_url = create_price_chart("ethereum", "Ethereum", "#627eea")
+    
+    if btc_chart_url and eth_chart_url:
+        # Отправляем альбом
+        photos = [
+            (btc_chart_url, f"₿ <b>Bitcoin:</b> ${btc:,.0f}\n{btc_ch:+.2f}% {signal(btc_ch)}"),
+            (eth_chart_url, f"Ξ <b>Ethereum:</b> ${eth:,.0f}\n{eth_ch:+.2f}% {signal(eth_ch)}")
+        ]
+        send_media_group(token, channel, photos)
+    else:
+        # Текстовый вариант
+        text2 = (
+            f"💎 <b>Основные активы:</b>\n\n"
+            f"₿ <b>Bitcoin:</b> ${btc:,.0f}\n"
+            f"   {btc_ch:+.2f}% {signal(btc_ch)}\n\n"
+            f"Ξ <b>Ethereum:</b> ${eth:,.0f}\n"
+            f"   {eth_ch:+.2f}% {signal(eth_ch)}"
+        )
+        send_telegram_message(token, channel, text2)
+    
+    # ====== ПОСТ 3: Новости и события ======
+    print("\n📤 ПОСТ 3: Новости и события")
     
     text3 = "📅 <b>Ключевые события:</b>\n\n"
     events = get_economic_calendar()
     for event, date in events.items():
-        text3 += f"• {event}: {date}\n"
+        text3 += f"• <b>{event}:</b> {date}\n"
     
     # Новости
     news = get_financial_news()
     if news:
         text3 += "\n📰 <b>Важные новости:</b>\n\n"
-        for i, article in enumerate(news[:3], 1):
-            title = article.get("title", "Без заголовка")
-            source = article.get("source", {}).get("name", "Источник")
-            text3 += f"{i}. {title}\n"
-            text3 += f"   📍 {source}\n\n"
+        count = 0
+        for article in news:
+            if count >= 3:
+                break
+            title = article.get("title", "")
+            source = article.get("source", {}).get("name", "")
+            url_article = article.get("url", "")
+            
+            if title and source:
+                text3 += f"• {title}\n"
+                text3 += f"  📍 {source}\n\n"
+                count += 1
     
-    text3 += "💡 <b>Факторы влияния:</b>\n"
-    text3 += "• Решения центробанков по ставкам\n"
-    text3 += "• Инфляция в США и ЕС\n"
-    text3 += "• Индекс доллара (DXY)\n"
-    text3 += "• Геополитическая ситуация\n\n"
-    text3 += "📌 <i>Диверсифицируйте риски</i>"
+    text3 += "💡 <b>Факторы влияния на рынок:</b>\n"
+    text3 += "• Ставки центробанков (ФРС, ЕЦБ)\n"
+    text3 += "• Данные по инфляции CPI\n"
+    text3 += "• Индекс доллара DXY\n"
+    text3 += "• Новости регулирования\n\n"
+    text3 += "📌 <i>Думай долгосрочно, не паникуй</i>"
     
-    requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": channel, "text": text3, "parse_mode": "HTML", "disable_web_page_preview": True}
-    )
+    send_telegram_message(token, channel, text3)
     
-    print("✅ Все посты отправлены!")
+    print("\n✅ Все посты отправлены!")
     return True
 
 if __name__ == "__main__":
-    print("🚀 Запуск бота...")
+    print("🚀 Запуск финансового бота...")
+    print("=" * 40)
+    
     success = send_post()
     
+    print("=" * 40)
     if success:
-        print("🎉 Работа завершена успешно")
+        print("🎉 Готово! Все посты в канале")
         exit(0)
     else:
-        print("💥 Работа завершена с ошибкой")
+        print("💥 Ошибка при отправке")
         exit(1)
