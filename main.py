@@ -50,7 +50,7 @@ def clean_html(html):
     return text.strip()
 
 def extract_images_from_html(html):
-    """Извлекает URL картинок из HTML (из атрибутов src)"""
+    """Извлекает URL картинок из HTML"""
     return re.findall(r'<img[^>]+src="([^"]+)"', html)
 
 # ------------------- Генерация картинки‑заглушки -------------------
@@ -86,7 +86,6 @@ HEADERS = {
 }
 
 def get_coinmarketcap_news():
-    """CoinMarketCap – JSON API, пробуем достать текст и картинки"""
     print("📡 CoinMarketCap...")
     try:
         url = "https://api.coinmarketcap.com/content/v3/news?page=1&size=5"
@@ -100,14 +99,11 @@ def get_coinmarketcap_news():
             title = item.get("title", "")
             link = item.get("link", "")
             image = item.get("thumbnail", "") or item.get("image", "")
-            # Контент может быть в 'content' или 'body'
             content = item.get("content", "") or item.get("body", "")
-            # Если контент – HTML, очистим
             text = clean_html(content) if content else ""
             images = [image] if image else []
             if content:
                 images.extend(extract_images_from_html(content))
-            # Убираем дубли
             images = list(set(images))
             if title and link:
                 news.append({
@@ -124,7 +120,6 @@ def get_coinmarketcap_news():
         return []
 
 def get_cryptopanic_news():
-    """CryptoPanic – RSS с полным текстом из description"""
     print("📡 CryptoPanic...")
     try:
         url = "https://cryptopanic.com/news/feed/?filter=all"
@@ -135,7 +130,6 @@ def get_cryptopanic_news():
         try:
             root = ET.fromstring(resp.content)
         except ET.ParseError:
-            # Чистим от невалидных символов
             cleaned = re.sub(r'[^\x20-\x7E\xA0-\xFF]', '', resp.text)
             root = ET.fromstring(cleaned)
         news = []
@@ -149,10 +143,8 @@ def get_cryptopanic_news():
             link_text = link.text or ""
             if not title_text or not link_text:
                 continue
-            # Полный текст из description (HTML)
             html_content = desc.text if desc is not None else ""
             text = clean_html(html_content)
-            # Картинки из description + возможно enclosure
             images = extract_images_from_html(html_content)
             enc = item.find("enclosure")
             if enc is not None:
@@ -174,7 +166,6 @@ def get_cryptopanic_news():
         return []
 
 def get_cointelegraph_news():
-    """CoinTelegraph – пробуем несколько RSS-адресов"""
     print("📡 CoinTelegraph...")
     for feed_url in [
         "https://cointelegraph.com/rss",
@@ -222,7 +213,6 @@ def get_cointelegraph_news():
     return []
 
 def get_google_news_crypto():
-    """Резерв – Google News (без полного текста, только заголовок)"""
     print("📡 Google News (резерв)...")
     try:
         url = "https://news.google.com/rss/search?q=криптовалюта&hl=ru&gl=RU&ceid=RU:ru"
@@ -374,14 +364,10 @@ def send_message(token, channel, text):
     return ok
 
 def send_media_group(token, channel, photos):
-    """Отправляет альбом до 10 фото с подписями"""
     url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
-    media = []
-    for url_img, caption in photos:
-        media.append({"type":"photo","media":url_img,"caption":caption,"parse_mode":"HTML"})
+    media = [{"type":"photo","media":url_img,"caption":cap,"parse_mode":"HTML"} for url_img, cap in photos]
     if not media:
         return True
-    # Отправляем не более 10 за раз
     for i in range(0, len(media), 10):
         chunk = media[i:i+10]
         r = requests.post(url, data={"chat_id":channel,"media":json.dumps(chunk)}, timeout=20)
@@ -392,12 +378,11 @@ def send_media_group(token, channel, photos):
     return True
 
 def split_long_text(text, limit=4000):
-    """Разбивает длинный текст на куски по лимиту, стараясь не резать слова"""
+    """Разбивает текст на части не длиннее limit, стараясь не разрывать слова"""
     if len(text) <= limit:
         return [text]
     parts = []
     while len(text) > limit:
-        # Ищем последний пробел перед лимитом
         idx = text.rfind(' ', 0, limit)
         if idx == -1:
             idx = limit
@@ -460,41 +445,42 @@ def send_post():
     text3 += "\n\n💡 <b>Факторы:</b>\n• Ставки ЦБ\n• Инфляция CPI\n• DXY\n• Регуляция\n\n📌 <i>Диверсифицируйте риски</i>"
     send_message(token, channel, text3)
     
-    # 4. Новости с полным текстом и картинками
+    # 4. Новости – полный текст, без купюр
     all_news = get_all_news()
     if all_news:
         random.shuffle(all_news)
         for news in all_news[:5]:
-            print(f"\n📰 Обработка: {news['title'][:50]}...")
-            # Формируем текстовое сообщение
-            header = f"📰 <b>{news['title']}</b>\n📍 {news['source']}\n\n"
-            content = news.get("content", "")
-            if content:
-                # Ограничим длину, если текст слишком большой
-                if len(content) > 3500:
-                    content = content[:3500] + "..."
-                full_text = header + content + f"\n\n🔗 <a href='{news['link']}'>Читать оригинал</a>"
-            else:
-                full_text = header + f"🔗 <a href='{news['link']}'>Читать статью</a>"
+            print(f"\n📰 {news['title'][:60]}...")
+            title = news['title']
+            source = news['source']
+            link = news['link']
+            content = news.get('content', '')
             
-            # Отправляем текст (если длинный — частями)
-            for part in split_long_text(full_text):
+            # Формируем полный текст для отправки
+            full_text = f"📰 <b>{title}</b>\n📍 {source}\n\n"
+            if content:
+                full_text += content + "\n\n"
+            full_text += f"🔗 <a href='{link}'>Читать оригинал</a>"
+            
+            # Разбиваем на части, если длиннее 4000 символов
+            parts = split_long_text(full_text)
+            for part in parts:
                 send_message(token, channel, part)
             
             # Отправляем картинки
-            images = news.get("images", [])
+            images = news.get('images', [])
             if images:
-                # Если одна картинка – просто фото с подписью (заголовок)
                 if len(images) == 1:
-                    send_photo(token, channel, images[0], f"{news['title']}")
+                    send_photo(token, channel, images[0], f"{title}")
                 else:
-                    # Альбом с подписями (только первые 10)
-                    img_captions = [(img, "") for img in images[:10]]
-                    send_media_group(token, channel, img_captions)
+                    # Отправляем до 10 картинок альбомом
+                    chunk = images[:10]
+                    captions = [(img, "") for img in chunk]
+                    send_media_group(token, channel, captions)
             elif not content:
                 # Если нет ни текста, ни картинок – генерируем заглушку
-                img_url = generate_news_image(news["title"], news["source"])
-                send_photo(token, channel, img_url, f"{news['title']}")
+                img_url = generate_news_image(title, source)
+                send_photo(token, channel, img_url, f"{title}")
     else:
         send_message(token, channel, "📰 Нет свежих новостей")
     
