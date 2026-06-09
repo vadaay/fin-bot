@@ -5,6 +5,7 @@ import json
 import random
 import re
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse, urlunparse
 
 # ------------------- Базовые данные рынка -------------------
 def get_crypto():
@@ -32,16 +33,92 @@ def get_fear_greed_index():
     except:
         return None
 
-# ------------------- Новости (только стабильные источники) -------------------
+# ------------------- Очистка ссылок -------------------
+def clean_url(url):
+    """Удаляет UTM-метки и лишние параметры из URL"""
+    if not url:
+        return url
+    parsed = urlparse(url)
+    # Оставляем только схему, домен и путь, убираем query и fragment
+    clean = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+    return clean
+
+# ------------------- Генерация картинки-заглушки -------------------
+def generate_news_image(title, source):
+    """Создаёт картинку с заголовком новости и источником через QuickChart"""
+    # Экранируем спецсимволы для JSON
+    safe_title = title[:100].replace('"', "'").replace('\n', ' ')
+    safe_source = source.replace('"', "'")
+    
+    config = {
+        "type": "bar",
+        "data": {
+            "labels": [""],
+            "datasets": [{
+                "data": [100],
+                "backgroundColor": "#f7931a" if "Coin" in source else "#3b82f6",
+                "barPercentage": 1.0,
+                "categoryPercentage": 1.0
+            }]
+        },
+        "options": {
+            "plugins": {
+                "title": {
+                    "display": True,
+                    "text": [safe_title],
+                    "color": "#ffffff",
+                    "font": {"size": 14, "weight": "bold"},
+                    "padding": 10
+                },
+                "subtitle": {
+                    "display": True,
+                    "text": f"Источник: {safe_source}",
+                    "color": "#cccccc",
+                    "font": {"size": 12}
+                },
+                "legend": {"display": False}
+            },
+            "scales": {
+                "x": {"display": False},
+                "y": {"display": False}
+            }
+        }
+    }
+    chart_json = json.dumps(config)
+    return f"https://quickchart.io/chart?c={chart_json}&width=500&height=300&backgroundColor=%231a1a2e"
+
+# ------------------- Новости (стабильные RSS) -------------------
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
+def extract_image_from_item(item):
+    """Пытается достать картинку из элемента RSS (enclosure, media:content, description)"""
+    # enclosure
+    enc = item.find("enclosure")
+    if enc is not None:
+        url = enc.get("url", "")
+        if url and any(url.lower().endswith(ext) for ext in ['.jpg','.jpeg','.png','.webp']):
+            return url
+    
+    # media:content
+    media = item.find("{http://search.yahoo.com/mrss/}content")
+    if media is not None:
+        url = media.get("url", "")
+        if url:
+            return url
+    
+    # в описании
+    desc = item.find("description")
+    if desc is not None and desc.text:
+        match = re.search(r'<img[^>]+src="([^"]+)"', desc.text)
+        if match:
+            return match.group(1)
+    return ""
+
 def get_coinmarketcap_news():
-    """CoinMarketCap Headlines – RSS (более надёжный)"""
     print("📡 CoinMarketCap...")
     try:
-        # RSS лента заголовков CoinMarketCap
         url = "https://coinmarketcap.com/headlines/news/feed/"
         resp = requests.get(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
@@ -52,15 +129,16 @@ def get_coinmarketcap_news():
         for item in root.findall(".//item")[:5]:
             title = item.find("title")
             link = item.find("link")
-            # Картинка может быть в enclosure
-            image = ""
-            enc = item.find("enclosure")
-            if enc is not None:
-                image = enc.get("url", "")
             title_text = title.text if title is not None else ""
             link_text = link.text if link is not None else ""
             if title_text and link_text:
-                news.append({"title": title_text, "link": link_text, "image": image, "source": "CoinMarketCap"})
+                image = extract_image_from_item(item)
+                news.append({
+                    "title": title_text,
+                    "link": clean_url(link_text),
+                    "image": image,
+                    "source": "CoinMarketCap"
+                })
         print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
@@ -68,7 +146,6 @@ def get_coinmarketcap_news():
         return []
 
 def get_cryptopanic_news():
-    """CryptoPanic RSS"""
     print("📡 CryptoPanic...")
     try:
         url = "https://cryptopanic.com/news/feed/?filter=all"
@@ -81,16 +158,16 @@ def get_cryptopanic_news():
         for item in root.findall(".//item")[:5]:
             title = item.find("title")
             link = item.find("link")
-            desc = item.find("description")
-            image = ""
-            if desc is not None and desc.text:
-                img_match = re.search(r'<img[^>]+src="([^"]+)"', desc.text)
-                if img_match:
-                    image = img_match.group(1)
             title_text = title.text if title is not None else ""
             link_text = link.text if link is not None else ""
             if title_text and link_text:
-                news.append({"title": title_text, "link": link_text, "image": image, "source": "CryptoPanic"})
+                image = extract_image_from_item(item)
+                news.append({
+                    "title": title_text,
+                    "link": clean_url(link_text),
+                    "image": image,
+                    "source": "CryptoPanic"
+                })
         print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
@@ -98,7 +175,6 @@ def get_cryptopanic_news():
         return []
 
 def get_cointelegraph_news():
-    """CoinTelegraph RSS"""
     print("📡 CoinTelegraph...")
     try:
         url = "https://cointelegraph.com/rss/feed/"
@@ -111,18 +187,16 @@ def get_cointelegraph_news():
         for item in root.findall(".//item")[:5]:
             title = item.find("title")
             link = item.find("link")
-            image = ""
-            media = item.find("{http://search.yahoo.com/mrss/}content")
-            if media is not None:
-                image = media.get("url", "")
-            if not image:
-                enc = item.find("enclosure")
-                if enc is not None:
-                    image = enc.get("url", "")
             title_text = title.text if title is not None else ""
             link_text = link.text if link is not None else ""
             if title_text and link_text:
-                news.append({"title": title_text, "link": link_text, "image": image, "source": "CoinTelegraph"})
+                image = extract_image_from_item(item)
+                news.append({
+                    "title": title_text,
+                    "link": clean_url(link_text),
+                    "image": image,
+                    "source": "CoinTelegraph"
+                })
         print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
@@ -133,7 +207,6 @@ def get_google_news_crypto():
     """Резервный источник – Google News (криптовалюты)"""
     print("📡 Google News (резерв)...")
     try:
-        # RSS Google News по запросу "криптовалюта"
         url = "https://news.google.com/rss/search?q=криптовалюта&hl=ru&gl=RU&ceid=RU:ru"
         resp = requests.get(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
@@ -147,7 +220,12 @@ def get_google_news_crypto():
             title_text = title.text if title is not None else ""
             link_text = link.text if link is not None else ""
             if title_text and link_text:
-                news.append({"title": title_text, "link": link_text, "image": "", "source": "Google News"})
+                news.append({
+                    "title": title_text,
+                    "link": clean_url(link_text),
+                    "image": "",  # Google News редко даёт картинки в RSS
+                    "source": "Google News"
+                })
         print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
@@ -155,16 +233,12 @@ def get_google_news_crypto():
         return []
 
 def get_all_news():
-    """Собирает новости со всех источников"""
     print("\n📰 СБОР НОВОСТЕЙ")
     all_news = []
-    
-    # Три основных источника
     all_news.extend(get_coinmarketcap_news())
     all_news.extend(get_cryptopanic_news())
     all_news.extend(get_cointelegraph_news())
     
-    # Резервный источник, если основных мало
     if len(all_news) < 3:
         print("⚠️ Мало новостей, добавляем Google News")
         all_news.extend(get_google_news_crypto())
@@ -176,11 +250,10 @@ def get_all_news():
         if n["title"] and n["title"] not in seen:
             seen.add(n["title"])
             unique.append(n)
-    
-    print(f"✅ ИТОГО уникальных новостей: {len(unique)}")
+    print(f"✅ ИТОГО уникальных: {len(unique)}")
     return unique
 
-# ------------------- Экономический календарь -------------------
+# ------------------- Экономкалендарь -------------------
 def get_economic_calendar():
     return {
         "🇺🇸 ФРС": "Решение по ставке — 12.06",
@@ -336,17 +409,17 @@ def send_post():
     text3 += "\n\n💡 <b>Факторы:</b>\n• Ставки ЦБ\n• Инфляция CPI\n• DXY\n• Регуляция\n\n📌 <i>Диверсифицируйте риски</i>"
     send_message(token, channel, text3)
     
-    # 4. Новости
+    # 4. Новости с картинками и чистыми ссылками
     all_news = get_all_news()
     if all_news:
         random.shuffle(all_news)
         for news in all_news[:5]:
             caption = f"📰 <b>{news['title']}</b>\n📍 {news['source']}\n\n{news['link']}"
-            img = news.get("image", "")
-            if img:
-                send_photo(token, channel, img, caption)
-            else:
-                send_message(token, channel, caption)
+            image_url = news.get("image", "")
+            if not image_url:
+                # Генерируем картинку-заглушку с заголовком
+                image_url = generate_news_image(news["title"], news["source"])
+            send_photo(token, channel, image_url, caption)
     else:
         send_message(token, channel, "📰 Нет свежих новостей")
     
@@ -354,5 +427,5 @@ def send_post():
     return True
 
 if __name__ == "__main__":
-    print("🚀 Старт бота")
+    print("🚀 Старт бота (чистые ссылки + картинки)")
     exit(0 if send_post() else 1)
