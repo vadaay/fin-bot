@@ -32,33 +32,36 @@ def get_fear_greed_index():
     except:
         return None
 
-# ------------------- Новости с указанных сайтов (с отладкой) -------------------
-SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
-
-def debug_source(name, response):
-    """Печатает первые 500 символов ответа и его статус"""
-    print(f"   [{name}] Статус: {response.status_code}")
-    content = response.text[:500].replace('\n', ' ')
-    print(f"   [{name}] Фрагмент: {content}...")
-    print(f"   [{name}] Длина ответа: {len(response.text)} символов")
+# ------------------- Новости (только стабильные источники) -------------------
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
 
 def get_coinmarketcap_news():
-    """CoinMarketCap Headlines (неофициальный JSON API)"""
+    """CoinMarketCap Headlines – RSS (более надёжный)"""
     print("📡 CoinMarketCap...")
     try:
-        url = "https://api.coinmarketcap.com/content/v3/news?page=1&size=5"
-        resp = SESSION.get(url, timeout=10)
-        debug_source("CoinMarketCap", resp)
-        data = resp.json()
+        # RSS лента заголовков CoinMarketCap
+        url = "https://coinmarketcap.com/headlines/news/feed/"
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            print(f"   Статус: {resp.status_code}")
+            return []
+        root = ET.fromstring(resp.content)
         news = []
-        for item in data.get("data", []):
-            title = item.get("title", "")
-            link = item.get("link", "")
-            image = item.get("thumbnail", "") or item.get("image", "")
-            if title and link:
-                news.append({"title": title, "link": link, "image": image, "source": "CoinMarketCap"})
-        print(f"   ✅ Найдено: {len(news)}")
+        for item in root.findall(".//item")[:5]:
+            title = item.find("title")
+            link = item.find("link")
+            # Картинка может быть в enclosure
+            image = ""
+            enc = item.find("enclosure")
+            if enc is not None:
+                image = enc.get("url", "")
+            title_text = title.text if title is not None else ""
+            link_text = link.text if link is not None else ""
+            if title_text and link_text:
+                news.append({"title": title_text, "link": link_text, "image": image, "source": "CoinMarketCap"})
+        print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
@@ -69,8 +72,10 @@ def get_cryptopanic_news():
     print("📡 CryptoPanic...")
     try:
         url = "https://cryptopanic.com/news/feed/?filter=all"
-        resp = SESSION.get(url, timeout=10)
-        debug_source("CryptoPanic", resp)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            print(f"   Статус: {resp.status_code}")
+            return []
         root = ET.fromstring(resp.content)
         news = []
         for item in root.findall(".//item")[:5]:
@@ -86,7 +91,7 @@ def get_cryptopanic_news():
             link_text = link.text if link is not None else ""
             if title_text and link_text:
                 news.append({"title": title_text, "link": link_text, "image": image, "source": "CryptoPanic"})
-        print(f"   ✅ Найдено: {len(news)}")
+        print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
@@ -97,8 +102,10 @@ def get_cointelegraph_news():
     print("📡 CoinTelegraph...")
     try:
         url = "https://cointelegraph.com/rss/feed/"
-        resp = SESSION.get(url, timeout=10)
-        debug_source("CoinTelegraph", resp)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            print(f"   Статус: {resp.status_code}")
+            return []
         root = ET.fromstring(resp.content)
         news = []
         for item in root.findall(".//item")[:5]:
@@ -116,79 +123,61 @@ def get_cointelegraph_news():
             link_text = link.text if link is not None else ""
             if title_text and link_text:
                 news.append({"title": title_text, "link": link_text, "image": image, "source": "CoinTelegraph"})
-        print(f"   ✅ Найдено: {len(news)}")
+        print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
         return []
 
-def get_coinfi_news():
-    """CoinFi (парсинг HTML)"""
-    print("📡 CoinFi...")
+def get_google_news_crypto():
+    """Резервный источник – Google News (криптовалюты)"""
+    print("📡 Google News (резерв)...")
     try:
-        url = "https://www.coinfi.com/"
-        resp = SESSION.get(url, timeout=10)
-        debug_source("CoinFi", resp)
-        # Расширенный regex – ищем любые ссылки внутри заголовков новостей
-        pattern = r'<h[2-4][^>]*>\s*<a[^>]+href="(https?://www\.coinfi\.com/[^"]+)"[^>]*>(.*?)</a>'
-        matches = re.findall(pattern, resp.text, re.DOTALL | re.IGNORECASE)
-        if not matches:
-            # Запасной вариант – ищем ссылки с классом post-title
-            pattern = r'<a\s+class="[^"]*post-title[^"]*"\s+href="(https?://www\.coinfi\.com/[^"]+)"[^>]*>(.*?)</a>'
-            matches = re.findall(pattern, resp.text, re.DOTALL | re.IGNORECASE)
+        # RSS Google News по запросу "криптовалюта"
+        url = "https://news.google.com/rss/search?q=криптовалюта&hl=ru&gl=RU&ceid=RU:ru"
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            print(f"   Статус: {resp.status_code}")
+            return []
+        root = ET.fromstring(resp.content)
         news = []
-        for link, title_html in matches[:5]:
-            title = re.sub(r'<[^>]+>', '', title_html).strip()
-            if title and link:
-                news.append({"title": title, "link": link, "image": "", "source": "CoinFi"})
-        print(f"   ✅ Найдено: {len(news)}")
-        return news
-    except Exception as e:
-        print(f"   ❌ Ошибка: {e}")
-        return []
-
-def get_coinbeagle_news():
-    """CoinBeagle (парсинг HTML)"""
-    print("📡 CoinBeagle...")
-    try:
-        url = "https://www.coinbeagle.com/"
-        resp = SESSION.get(url, timeout=10)
-        debug_source("CoinBeagle", resp)
-        # Ищем заголовки в <h2> с классом entry-title или похожие
-        pattern = r'<h2[^>]*class="[^"]*entry-title[^"]*"[^>]*>\s*<a[^>]+href="(https?://www\.coinbeagle\.com/[^"]+)"[^>]*>(.*?)</a>'
-        matches = re.findall(pattern, resp.text, re.DOTALL | re.IGNORECASE)
-        if not matches:
-            # Запасной – любые ссылки в <article>
-            pattern = r'<article[^>]*>.*?<a[^>]+href="(https?://www\.coinbeagle\.com/[^"]+)"[^>]*>(.*?)</a>'
-            matches = re.findall(pattern, resp.text, re.DOTALL | re.IGNORECASE)
-        news = []
-        for link, title_html in matches[:5]:
-            title = re.sub(r'<[^>]+>', '', title_html).strip()
-            if title and link:
-                news.append({"title": title, "link": link, "image": "", "source": "CoinBeagle"})
-        print(f"   ✅ Найдено: {len(news)}")
+        for item in root.findall(".//item")[:5]:
+            title = item.find("title")
+            link = item.find("link")
+            title_text = title.text if title is not None else ""
+            link_text = link.text if link is not None else ""
+            if title_text and link_text:
+                news.append({"title": title_text, "link": link_text, "image": "", "source": "Google News"})
+        print(f"   ✅ Получено: {len(news)}")
         return news
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
         return []
 
 def get_all_news():
-    """Собирает новости со всех указанных сайтов"""
-    print("\n📰 НАЧИНАЕМ СБОР НОВОСТЕЙ")
+    """Собирает новости со всех источников"""
+    print("\n📰 СБОР НОВОСТЕЙ")
     all_news = []
+    
+    # Три основных источника
     all_news.extend(get_coinmarketcap_news())
     all_news.extend(get_cryptopanic_news())
     all_news.extend(get_cointelegraph_news())
-    all_news.extend(get_coinfi_news())
-    all_news.extend(get_coinbeagle_news())
-
+    
+    # Резервный источник, если основных мало
+    if len(all_news) < 3:
+        print("⚠️ Мало новостей, добавляем Google News")
+        all_news.extend(get_google_news_crypto())
+    
+    # Убираем дубликаты
     seen = set()
     unique = []
     for n in all_news:
         if n["title"] and n["title"] not in seen:
             seen.add(n["title"])
             unique.append(n)
-    print(f"✅ ИТОГО уникальных новостей: {len(unique)}\n")
+    
+    print(f"✅ ИТОГО уникальных новостей: {len(unique)}")
     return unique
 
 # ------------------- Экономический календарь -------------------
@@ -347,7 +336,7 @@ def send_post():
     text3 += "\n\n💡 <b>Факторы:</b>\n• Ставки ЦБ\n• Инфляция CPI\n• DXY\n• Регуляция\n\n📌 <i>Диверсифицируйте риски</i>"
     send_message(token, channel, text3)
     
-    # 4. Новости с сайтов
+    # 4. Новости
     all_news = get_all_news()
     if all_news:
         random.shuffle(all_news)
@@ -365,5 +354,5 @@ def send_post():
     return True
 
 if __name__ == "__main__":
-    print("🚀 Старт бота (режим отладки новостей)")
+    print("🚀 Старт бота")
     exit(0 if send_post() else 1)
