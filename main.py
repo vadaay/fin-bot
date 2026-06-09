@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from urllib.parse import urlparse, urlunparse, quote
 
 # ------------------- НАСТРОЙКИ -------------------
-ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")  # ваш ID для ошибок
+ADMIN_CHAT_ID = os.environ.get("1904969464")  # ваш ID для ошибок
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
